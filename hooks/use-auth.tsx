@@ -1,140 +1,292 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
+
 import { useFirebase } from "./use-firebase";
 
 import type Firebase from "firebase";
+import { useRouter } from "next/router";
+import { useLocalStorage } from "./use-local-storage";
+import { decrypt } from "utils/encryption";
 
-interface User extends Firebase.User {
-  username: string;
-  uuid: string;
-  accounts: {
-    [key: string]: {
-      verified: boolean;
-      username: string;
-    };
+const defaultUser: UserData = {
+  profile: {
+    first_name: "",
+    last_name: "",
+  },
+
+  history: [],
+
+  permissions: [],
+
+  token: "",
+  encryption_key: "",
+};
+
+export interface UserData {
+  profile: {
+    first_name: string;
+    last_name: string;
   };
+
+  history: {
+    type: "one-time" | "subscription";
+    timestamp: number;
+  }[];
+
+  permissions: string[],
+
+  token: string;
+  encryption_key: string;
 }
 
+export type User = Firebase.User & Readonly<UserData>;
+
 const AuthContext = createContext<{
-  exists: boolean;
-  user: User;
-  signin: (email: any, password: any) => Promise<User>;
-  signup: (email: any, password: any) => Promise<User>;
-  signout: () => Promise<void>;
-  sendPasswordResetEmail: (email: any) => Promise<boolean>;
-  confirmPasswordReset: (code: any, password: any) => Promise<boolean>;
-}>({ exists: false } as any);
+  user?: User;
+  phone: {
+    authenticate(phone_number: string): Promise<void>;
+    confirm(code: string): Promise<User>;
+  };
+  email: {
+    register(email: string, password: string): Promise<User>;
+    login(email: string, password: string): Promise<User>;
+  };
+  logout(): Promise<void>;
+}>(undefined);
 
 export function ProvideAuth({ children }) {
+  const { push } = useRouter();
+
   const firebase = useFirebase();
 
-  const [user, setUser] = useState(null);
+  const [encryption_key, setKey] = useLocalStorage("encryption");
+
+  const [user, setUser] = useState<Firebase.User>();
+  const [data, setData] = useState<UserData>(defaultUser);
+
+  const [
+    confirmation,
+    setConfirmation,
+  ] = useState<Firebase.auth.ConfirmationResult>();
   const [loading, setLoading] = useState(typeof window !== "undefined");
 
-  const signin = (email, password) => {
-    return firebase
-      .auth()
-      .signInWithEmailAndPassword(email, password)
-      .then(({ user }) => {
-        if (user) {
-          firebase
-            .firestore()
-            .collection("users")
-            .doc(user.uid)
-            .onSnapshot((snapshot) => {
-              setUser({
-                ...user,
-                ...(snapshot.exists ? snapshot.data() : {}),
-              } as User);
+  function createUser(
+    user: Firebase.User
+  ): Promise<{ user: Firebase.User; data: UserData }> {
+    return new Promise(async (resolve) => {
+      const document = firebase.firestore().collection("users").doc(user.uid);
+
+      const token = await user.getIdToken();
+
+      document
+        .get()
+        .then((snapshot) => {
+          if (snapshot.exists) {
+            return resolve({
+              user,
+              data: decrypt({
+                ...defaultUser,
+                ...snapshot.data(),
+                token,
+                encryption_key,
+              }, encryption_key),
             });
-        } else {
-          setUser(false);
-        }
+          }
+          resolve({ user, data: { ...defaultUser, token, encryption_key } });
+        })
+        .catch(() => {
+          resolve({ user, data: { ...defaultUser, token, encryption_key } });
+        });
+    });
+  }
 
-        return user;
+  useEffect(() => {
+    var unsubscribeSnapshot;
+
+    const unsubscribe = firebase.auth().onAuthStateChanged(async (user) => {
+      if (user) {
+        setUser(user);
+
+        const document = firebase.firestore().collection("users").doc(user.uid);
+
+        const token = await user.getIdToken();
+
+        unsubscribeSnapshot = document.onSnapshot((snapshot) => {
+          if (snapshot.exists) {
+            setData(decrypt({
+              ...defaultUser,
+              ...snapshot.data(),
+              token,
+              encryption_key,
+            }, encryption_key));
+          }
+          setLoading(false);
+        });
+      } else {
+        setUser(undefined);
+        setData(undefined);
+
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      unsubscribeSnapshot();
+    };
+  }, []);
+
+  const phone = {
+    authenticate(phone_number: string) {
+      return new Promise<void>((resolve) => {
+        firebase
+          .auth()
+          .signInWithPhoneNumber(
+            phone_number,
+            (window as any).recaptchaVerifier
+          )
+          .then(async (confirmation) => {
+            setConfirmation(confirmation);
+            setKey(
+              (
+                await (
+                  await fetch("/api/encryption", {
+                    method: "POST",
+                    body: JSON.stringify({ token: phone_number }),
+                    headers: {
+                      "Content-Type": "application/json",
+                    },
+                  })
+                ).json()
+              ).result
+            );
+
+            resolve();
+          });
       });
+    },
+    confirm(code: string) {
+      return new Promise<User>((resolve) => {
+        confirmation?.confirm(code).then((credentials) => {
+          createUser(credentials.user).then(({ user, data }) => {
+            // User is valid.
+            setUser(user);
+            setData(decrypt(data, encryption_key));
+
+            resolve(Object.assign(user, data));
+          });
+        });
+      });
+    },
   };
 
-  const signup = (email, password) => {
-    return firebase
-      .auth()
-      .createUserWithEmailAndPassword(email, password)
-      .then((response) => {
-        setUser(response.user);
-        return response.user;
+  const email = {
+    register(email: string, password: string) {
+      return new Promise<User>((resolve) => {
+        firebase
+          .auth()
+          .createUserWithEmailAndPassword(email, password)
+          .then((credentials) => {
+            createUser(credentials.user).then(async ({ user, data }) => {
+              // User is valid.
+              setUser(user);
+              setData(decrypt(data, encryption_key));
+              setKey(
+                (
+                  await (
+                    await fetch("/api/encryption", {
+                      method: "POST",
+                      body: JSON.stringify({ token: password }),
+                      headers: {
+                        "Content-Type": "application/json",
+                      },
+                    })
+                  ).json()
+                ).result
+              );
+
+              resolve(Object.assign(user, data));
+            });
+          });
       });
+    },
+
+    login(email: string, password: string) {
+      return new Promise<User>((resolve) => {
+        firebase
+          .auth()
+          .signInWithEmailAndPassword(email, password)
+          .then((credentials) => {
+            createUser(credentials.user).then(async ({ user, data }) => {
+              // User is valid.
+              setUser(user);
+              setData(decrypt(data, encryption_key));
+              setKey(
+                (
+                  await (
+                    await fetch("/api/encryption", {
+                      method: "POST",
+                      body: JSON.stringify({ token: password }),
+                      headers: {
+                        "Content-Type": "application/json",
+                      },
+                    })
+                  ).json()
+                ).result
+              );
+
+              resolve(Object.assign(user, data));
+            });
+          });
+      });
+    },
   };
 
-  const signout = () => {
+  function logout() {
     return firebase
       .auth()
       .signOut()
       .then(() => {
-        setUser(false);
+        push("/");
       });
-  };
-
-  const sendPasswordResetEmail = (email) => {
-    return firebase
-      .auth()
-      .sendPasswordResetEmail(email)
-      .then(() => {
-        return true;
-      });
-  };
-
-  const confirmPasswordReset = (code, password) => {
-    return firebase
-      .auth()
-      .confirmPasswordReset(code, password)
-      .then(() => {
-        return true;
-      });
-  };
-
-  useEffect(() => {
-    if (loading) {
-      const unsubscribe = firebase.auth().onAuthStateChanged((user) => {
-        if (user) {
-          firebase
-            .firestore()
-            .collection("users")
-            .doc(user.uid)
-            .onSnapshot((snapshot) => {
-              setUser({
-                ...user,
-                ...(snapshot.exists ? snapshot.data() : {}),
-              } as User);
-              setLoading(false);
-            });
-        } else {
-          setUser(false);
-          setLoading(false);
-        }
-      });
-
-      return () => unsubscribe();
-    }
-  }, []);
+  }
 
   if (loading) return null;
 
-  const auth = {
-    exists: user,
-    user,
-    signin,
-    signup,
-    signout,
-    sendPasswordResetEmail,
-    confirmPasswordReset,
-  };
+  const instance = user ? Object.assign(user, data) : undefined;
 
   return (
-    <AuthContext.Provider value={auth as any}>{children}</AuthContext.Provider>
+    <AuthContext.Provider
+      value={{
+        user: instance,
+        phone,
+        email,
+        logout,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
   );
 }
 
-// Hook for child components to get the auth object ...
-// ... and re-render when it changes.
-export const useAuth = () => {
+export function useAuth() {
   return useContext(AuthContext);
-};
+}
+
+export function RecaptchaVerifier() {
+  const firebase = useFirebase();
+
+  useEffect(() => {
+    (window as any).recaptchaVerifier = new firebase.auth.RecaptchaVerifier(
+      "firebase-recaptcha-verifier",
+      {
+        size: "invisible",
+      }
+    );
+  }, []);
+
+  return <div id="firebase-recaptcha-verifier" />;
+}
+
+export function useRecaptchaVerifier() {
+  return (window as any)?.recaptchaVerifier;
+}

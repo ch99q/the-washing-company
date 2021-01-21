@@ -10,7 +10,7 @@ import "styles/tailwind.utilities.css";
 import { ProvideFirebase } from "../hooks/use-firebase";
 import { ProvideAuth } from "hooks/use-auth";
 
-function MyApp({ Component, pageProps }) {
+export default function App({ Component, pageProps }) {
   return (
     <ProvideFirebase
       config={{
@@ -23,6 +23,7 @@ function MyApp({ Component, pageProps }) {
         measurementId: "G-JJW42Y84PK",
       }}
       auth
+      firestore
     >
       <ProvideAuth>
         <Component {...pageProps} />
@@ -30,5 +31,3 @@ function MyApp({ Component, pageProps }) {
     </ProvideFirebase>
   );
 }
-
-export default MyApp;

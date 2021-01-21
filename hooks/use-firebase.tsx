@@ -1,4 +1,10 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 
 import type Firebase from "firebase";
 
@@ -34,7 +40,7 @@ export function ProvideFirebase({
 >) {
   const [firebase, setFirebase] = useState<typeof Firebase>();
 
-  const importFirebase = async () => {
+  const importFirebase = useCallback(async function importFirebase() {
     const { default: firebase } = await import("firebase/app");
 
     await Promise.all([
@@ -47,18 +53,18 @@ export function ProvideFirebase({
     if (!firebase.apps.length) {
       firebase.initializeApp(config);
 
-      if (auth)
+      if (auth && "auth" in firebase)
         firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
 
-      if (firestore) firebase.firestore();
+      if (firestore && "firestore" in firebase) firebase.firestore();
 
-      if (database) firebase.database();
+      if (database && "database" in firebase) firebase.database();
 
-      if (analytics) firebase.analytics();
+      if (analytics && "analytics" in firebase) firebase.analytics();
 
       setFirebase(firebase);
     }
-  };
+  }, []);
 
   useEffect(() => {
     importFirebase();

@@ -1,0 +1,126 @@
+import { useEffect, useState } from "react";
+
+import Head from "next/head";
+
+import { useAuthorized } from "hooks/use-authorized";
+
+import Layout from "../../layouts/default";
+
+import Button from "components/elements/button";
+
+import UndrawInProgress from "assets/illustrations/undraw_in_progress.svg";
+import UndrawWarning from "assets/illustrations/undraw_warning.svg";
+import { useRouter } from "next/router";
+
+import useSWR from "swr";
+
+function Progress({ finish }) {
+  const [distance, setDistance] = useState<number>(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setDistance(finish - new Date().getTime());
+    }, 1000);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, []);
+
+  return (
+    <section>
+      <UndrawInProgress className="h-64" />
+
+      <div className="flex items-center justify-center space-x-2 text-4xl font-bold">
+        <span>
+          {Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))}
+        </span>
+        <span>:</span>
+        <span>{Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60))}</span>
+        <span>:</span>
+        <span>{Math.floor((distance % (1000 * 60)) / 1000)}</span>
+      </div>
+
+      <Button>Abort</Button>
+    </section>
+  );
+}
+
+export default function Terminal() {
+  const {
+    query: { id },
+  } = useRouter();
+
+  const [_, update] = useState(0);
+
+  const { data } = useSWR("/api/wash/status?id=" + id);
+
+  if (data?.errorCode)
+    return (
+      <Layout className="flex">
+        <Head>
+          <title>404 | The Washing Company</title>
+          <link rel="icon" href="/favicon.ico" />
+        </Head>
+      </Layout>
+    );
+
+  console.log("Updated!")
+
+  const isAvailable = data?.process.status === 0;
+  const isRunning = data?.process.status === 1;
+  const isAborted = data?.process.status === 2;
+  const isException = ![-1, 200].includes(data?.status.code);
+
+  if (isAborted) {
+    const interval = setInterval(() => {
+      fetch("/api/wash/validate?id" + id)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data?.status?.code === 200) {
+            clearInterval(interval);
+            update(1);
+          }
+        });
+    }, 5000);
+  }
+
+  return (
+    <Layout className="flex space-x-8">
+      <Head>
+        <title>The Washing Company</title>
+        <link rel="icon" href="/favicon.ico" />
+      </Head>
+
+      <Layout.Header>
+        <span>#{id}</span>
+      </Layout.Header>
+
+      <aside>
+        {isRunning && (
+          <Progress
+            finish={new Date(data.process.finished._seconds * 1000).getTime()}
+          />
+        )}
+        {isAborted && (
+          <section>
+            <UndrawWarning className="h-64" />
+
+            <p className="mt-4 text-3xl text-center">Washing Aborted!</p>
+          </section>
+        )}
+      </aside>
+
+      <main>
+        {isException && (
+          <div>
+            <span>Exception!</span>
+          </div>
+        )}
+
+        <span>Wash in progress!</span>
+        {JSON.stringify(data)}
+      </main>
+    </Layout>
+  );
+}

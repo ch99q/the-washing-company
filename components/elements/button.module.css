@@ -1,0 +1,40 @@
+.button {
+  @apply border-2 transition transform hover:shadow-lg focus:outline-none;
+}
+
+
+.button:not(.outline) {
+  @apply bg-black border-transparent text-white hover:bg-white hover:text-black hover:border-black focus:bg-white focus:text-black focus:border-black;
+}
+
+.outline {
+  @apply border-black hover:bg-black focus:bg-black hover:text-white focus:text-white;
+}
+
+.small {
+  @apply py-2 px-12;
+}
+
+.normal {
+  @apply py-1 px-4;
+}
+
+.large {
+  @apply px-2;
+}
+
+.transition-left {
+  @apply hover:-translate-x-2;
+}
+
+.transition-right {
+  @apply hover:translate-x-2;
+}
+
+.transition-up {
+  @apply hover:-translate-y-1;
+}
+
+.transition-down {
+  @apply hover:translate-y-1;
+}

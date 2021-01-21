@@ -3,13 +3,15 @@ import { useEffect } from "react";
 
 import { useAuth } from "./use-auth";
 
-export function useAuthorized() {
-  const router = useRouter();
-  const { exists } = useAuth();
+export default function useAuthorized(
+  redirectUrl = "/"
+): ReturnType<typeof useAuth> {
+  const auth = useAuth();
+  const { asPath, replace } = useRouter();
 
   useEffect(() => {
-    if (!exists) router.back();
-  }, []);
+    if (!auth.user) replace(redirectUrl);
+  }, [auth, asPath]);
 
-  return exists;
+  return auth;
 }
