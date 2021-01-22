@@ -8,7 +8,7 @@ const Encrypted = forwardRef(
   (
     {
       className,
-      children,
+      children = "",
       encryption,
       ...props
     }: JSX.IntrinsicElements["span"] & {
